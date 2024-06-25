@@ -1,0 +1,6 @@
+---
+- name: Upgrade Rhel7-8
+  hosts: all
+
+  roles:
+    - csb-ansible-icinga2
