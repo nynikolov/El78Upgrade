@@ -1,0 +1,263 @@
+---
+- name:  RHEL 7 to RHEL 8 Upgrade
+  hosts: all
+  tasks:
+#  - name: Install python2-dnf
+#    yum:
+#      name:  python2-dnf
+#      state: present
+#  - name: Install leapp-upgrade
+#    yum:
+#      name: leapp-upgrade 
+#      state: latest
+#    with_items:
+#      - python2-dnf
+#      - leapp-upgrade
+
+  - name: Set Proxy
+    shell: cp /etc/environment /etc/environment.bak && echo "http_proxy=http://195.49.159.98:3128/" > /etc/environment && echo "https_proxy=http://195.49.159.98:3128" >> /etc/environment
+#  - name: Set Proxy
+#    shell: export http_proxy=http://195.49.159.98:3128 && export https_proxy=$http_proxy
+    tags:
+      - before
+  - name: Register with temprorary activationkey for update
+    shell: subscription-manager register --org="gfk" --activationkey="custom for upgrade" --force
+    tags:
+      - before
+  - name: Yum Update
+    block:
+    - name: Update all packages
+      yum: name='*' state=latest 
+#        name: '*' 
+#        state: latest
+      async: 3600
+      poll: 30
+    - name: Check if reboot is needed
+      shell: if [ $(rpm -q --last kernel | awk 'NR==1 {print $1}') != kernel-$(uname -r) ]; then echo 'reboot'; else echo 'Kernel is current'; fi
+      ignore_errors: true
+      register: need_reboot
+    - name: Reboot and wait updates to be applied
+      ansible.builtin.reboot:
+        reboot_timeout: 3600
+      when: "need_reboot.stdout == 'reboot'"
+    tags:
+      - update
+      - before
+#  - name: Set Proxy
+#    shell: export http_proxy=http://195.49.159.98:3128 && export https_proxy=$http_proxy
+#    tags:
+#      - before
+  - name: Install leapp-upgrade
+    yum:
+      name: leapp-upgrade
+      state: latest
+    tags:
+      - before
+#  - name: Register with temprorary activationkey for update
+#    shell: subscription-manager register --org="gfk" --activationkey="custom for upgrade" --force
+#    tags:
+#      - before
+  - name: Copy Leapp data files.
+    copy:
+      src: leapp-data-22.tar.gz
+      dest: /root/leapp-data-22.tar.gz
+      owner: root
+      group: root
+    tags:
+      - before
+  - name: Extract Leapp data files.
+    shell: tar -xzf /root/leapp-data-22.tar.gz -C /etc/leapp/files && rm leapp-data-22.tar.gz
+    tags:
+      - before
+  - name: Remove openssl11-libs if present
+    yum:
+      name: openssl11-libs
+      state: absent
+    tags:
+      - before
+  - name: Remove Pata_acpi module
+    modprobe:
+      name: pata_acpi
+      state: absent
+    tags:
+      - before
+  - name: Remove Floppy module
+    modprobe:
+      name: floppy
+      state: absent
+    tags:
+      - before
+
+  - name: Extend the Var to 10Gb.
+    community.general.lvol:
+      vg: system
+      lv: var
+      size: 10G
+      resizefs: true
+      shrink: false
+    tags:
+      - before
+#  - name: Set True in Answer file for  remove_pam_pkcs11_module
+#    shell: leapp answer --section remove_pam_pkcs11_module_check.confirm=True
+  - name: Generate leapp preupgrade report
+    shell: leapp preupgrade
+    async: 3600
+    poll: 30
+    register: leapp_preupgrade
+    ignore_errors: yes
+    tags:
+      - before
+  - name: Set True in Answer file for  remove_pam_pkcs11_module
+    shell: leapp answer --section remove_pam_pkcs11_module_check.confirm=True
+    tags:
+      - before
+  - name: Ensure that unused filesystems are in blacklist
+    lineinfile:
+      dest: "/etc/ssh/sshd_config"
+      regexp: "PermitRootLogin"
+      line:  "PermitRootLogin yes"
+      state: present
+    tags:
+      - before
+  - name: Ensure NFS is not installed
+    block:
+    - name: Check for nfs in /etc/fstab
+      shell: grep nfs /etc/fstab
+      register: nfs_mp
+      ignore_errors: yes
+    - name: Check for nfs shares
+      shell: nfsstat -m
+      register: nfs_shares
+      ignore_errors: yes
+    - name: Fstab result
+      debug:
+        var: nfs_mp.stdout
+    - name: Nfs shares found
+      debug:
+        var: nfs_shares.stdout
+    - name: Comment NFS in FStab
+      replace:
+        path: "/etc/fstab"
+        regexp: "{{ nfs_mp.stdout }}"
+        replace:  "#{{ nfs_mp.stdout }}"
+      when: nfs_mp.stdout != ""
+#        state: present
+    - name: Umount NFS
+      shell: "umount {{ nfs_mp.stdout.split()[1] }}"
+      when: nfs_shares.stdout != ""
+#      debug:
+#        var: nfs_mp.stdout.split()[1]    
+    tags:
+      - nfs
+      - before
+  - name: Generate leapp preupgrade report
+    shell: leapp preupgrade
+    async: 3600
+    poll: 30
+    tags:
+      - before
+      - preup
+  - name: Start leapp upgrade
+    shell: leapp upgrade
+    async: 3600
+    poll: 30
+    tags:
+      - before
+      - preup
+      - up
+  - name: Reboot and wait updates to be applied
+    ansible.builtin.reboot:
+      reboot_timeout: 3600
+    tags:
+      - before
+      - preup
+      - up
+#  - name: Set Proxy
+#    shell: sleep 60 && export http_proxy=http://195.49.159.98:3128 && export https_proxy=$http_proxy
+#    tags:
+#      - after
+  - name: Check for NFS in Fstab
+    block:
+    - name: Check for nfs in /etc/fstab
+      shell: sleep 60 &&  grep nfs /etc/fstab
+      register: nfs_mp
+      ignore_errors: yes
+    - name: Fstab result
+      debug:
+        var: nfs_mp.stdout
+    - name: Comment NFS in FStab
+      replace:
+        path: "/etc/fstab"
+        regexp: "{{ nfs_mp.stdout }}"
+        replace:  "{{ nfs_mp.stdout|replace('#','') }}"
+      when: nfs_mp.stdout != ""
+    - name: Remount NFS
+      shell: mount -a
+      when: nfs_mp.stdout != ""
+    - name: Reload Daemon
+      shell: systemctl daemon-reload
+      when: nfs_mp.stdout != ""
+    tags:
+      - after
+  - name: Register with RHel8 activationkey
+    shell: subscription-manager register --org="gfk" --activationkey="RHEL 8","RHEL 8 - 2" --force
+    tags:
+      - after
+  - name: Restart McAfee/ENS
+    shell: /opt/McAfee/ens/tp/init/mfetpd-control.sh restart; systemctl restart mcafee.ma
+    tags:
+      - after
+  - name: Install Icinga2
+    block:
+#    - name: Set Proxy
+#      shell: cp /etc/environment /etc/environment.bak && echo "http_proxy=http://195.49.159.98:3128/" > /etc/environment && echo "https_proxy=http://195.49.159.98:3128" >> /etc/environment 
+    - name: Add missing repo
+      shell: yum install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-8.noarch.rpm
+    - name: Remove old files
+      file:
+        state: absent
+        path: "{{ item }}"
+      with_items:
+        - /etc/icinga2
+        - /var/lib/icinga2
+    - name: Install needed packets
+      dnf:
+        name: "{{ item }}" 
+        state: present
+      with_items:
+        - icinga2
+        - nrpe
+        - nagios-plugins-time
+        - nagios-plugins-load
+        - nagios-plugins-users
+        - nagios-plugins-file_age
+        - nagios-plugins-icmp
+        - nagios-plugins-ping
+        - nagios-plugins-procs
+        - nagios-plugins-disk
+        - nagios-plugins-ntp
+        - nagios-plugins-bonding
+        - nagios-plugins-perl
+        - nagios-plugins-swap
+        - nagios-plugins-uptime
+        - nagios-plugins-log
+    - name: Create nrpe config
+      shell: cd /etc/nagios/; mv nrpe.cfg nrpe.cfg_nok; mv nrpe.cfg.rpmsave nrpe.cfg
+    - name: Start nrpe service
+      systemd:
+        name: nrpe
+        state: started
+        enabled: true
+    tags:
+      - after
+      - icinga
+
+  - name: Include role Icinga
+    command: ansible-playbook /home/gfk.com/ivan.stamov.adm/rhel7-8/csb-ansible-icinga2.yml -e 'icinga2_core_api_basic_auth=YW5zaWJsZTpTVHVkZVNDbg== icinga2_zone=master' --skip-tags 'installation' -i dcex9002to84hqb, -e 'ansible_python_interpreter=/usr/bin/python3' -e 'icinga2_user=icinga' -e 'icinga2_group=icinga'
+    delegate_to: 127.0.0.1
+    tags:
+      - 11
+
+  roles:
+    - remove_xdr
+    - deploy_xdr_fresh
