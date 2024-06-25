@@ -1,0 +1,35 @@
+---
+- name: Upgrade Rhel7-8
+  hosts: all
+  vars_files: orchpass.yml
+  tasks:
+    - ansible.builtin.import_role:
+        name: "el78"
+      vars:
+        ansible_python_interpreter: /usr/bin/python2
+#      tags: always
+    - ansible.builtin.import_role:
+        name: "remove_xdr"
+    - ansible.builtin.import_role:
+        name: "remove_ens"
+    - ansible.builtin.import_role:
+        name: "csb-ansible-icinga2"
+      vars:
+        icinga2_core_api_basic_auth: "YW5zaWJsZTpTVHVkZVNDbg=="
+        icinga2_zone: master
+        ansible_python_interpreter: /usr/bin/python3
+        icinga2_user: icinga
+        icinga2_group: icinga
+    - ansible.builtin.import_role:
+        name: "install_S1"
+      vars:
+        rpm_agent_installer_url: http://dcex1078orcha01.gfk.com/pulp/content/gfk/Library/custom/gfk-custom/gfk-agents/SentinelAgent_linux_x86_64_v23_3_2_12.rpm
+        deb_agent_installer_url: http://dcex1078orcha01.gfk.com/pulp/content/gfk/Library/custom/gfk-custom/gfk-agents/SentinelAgent_linux_x86_64_v23_3_2_12.deb
+        registration_token: "eyJ1cmwiOiAiaHR0cHM6Ly9ldWNlMS0xMDguc2VudGluZWxvbmUubmV0IiwgInNpdGVfa2V5IjogImVhMDdhODdlMGI4ODk2YWUifQ=="
+
+
+#  roles:
+#    - rhel78
+#    - csb-ansible-icinga2
+#    - remove_xdr
+#    - deploy_xdr_fresh
